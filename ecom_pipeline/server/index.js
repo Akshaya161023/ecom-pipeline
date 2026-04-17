@@ -2,7 +2,7 @@ const express = require("express");
 const cors = require("cors");
 const http = require("http");
 const { WebSocketServer } = require("ws");
-
+const path = require("path");
 const { connect, getSnapshot, watchCollections } = require("./db");
 const statsRouter = require("./routes/stats");
 
@@ -18,10 +18,11 @@ const wss = new WebSocketServer({ server });
 
 app.use(cors());
 app.use(express.json());
+app.use(express.static(path.join(__dirname, "public")));
 app.use("/api", statsRouter);
 
 app.get("/", (_req, res) => {
-  res.send("Ecom Pipeline Backend Live");
+  res.sendFile(path.join(__dirname, "public", "index.html"));
 });
 
 app.get("/health", (_req, res) => res.json({ status: "ok" }));
@@ -128,4 +129,7 @@ async function main() {
 main().catch((err) => {
   console.error("[Server] Fatal error:", err);
   process.exit(1);
+});
+app.get("*", (_req, res) => {
+  res.sendFile(path.join(__dirname, "public", "index.html"));
 });

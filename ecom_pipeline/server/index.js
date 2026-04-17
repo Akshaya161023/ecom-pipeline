@@ -5,12 +5,11 @@ const { WebSocketServer } = require("ws");
 const { connect, getSnapshot, watchCollections } = require("./db");
 const statsRouter         = require("./routes/stats");
 
-const PORT    = 3001;
-const WS_PORT = 8080;
+const PORT = process.env.PORT || 3001;
 
 const app    = express();
 const server = http.createServer(app);
-const wss    = new WebSocketServer({ port: WS_PORT });
+const wss = new WebSocketServer({ server });
 
 // ── Middleware ─────────────────────────────────────────────────────────────
 app.use(cors());
@@ -74,8 +73,8 @@ async function main() {
   });
 
   server.listen(PORT, () => {
-    console.log(`[Server] REST      → http://localhost:${PORT}`);
-    console.log(`[Server] WebSocket → ws://localhost:${WS_PORT}`);
+    console.log(`[Server] Running on port ${PORT}`);
+    console.log(`[WebSocket] Shared same port`);
   });
 }
 

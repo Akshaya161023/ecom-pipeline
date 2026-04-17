@@ -59,10 +59,18 @@ wss.on("connection", async (ws) => {
 
 // ── Bootstrap ──────────────────────────────────────────────────────────────
 async function main() {
-  await connect();
-
+  try {
+    await connect();
+  } catch (err) {
+    console.log("DB connection skipped:", err.message);
+  }
   // Watch MongoDB change streams → broadcast fresh data to all WS clients
+  try {
   await watchCollections(async () => {
+      });
+} catch (err) {
+  console.log("Watch skipped:", err.message);
+}
     try {
       const data = await getSnapshot();
       broadcast({ type: "update", data, timestamp: new Date().toISOString() });

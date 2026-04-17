@@ -18,12 +18,13 @@ const wss = new WebSocketServer({ server });
 
 app.use(cors());
 app.use(express.json());
-
 app.use("/api", statsRouter);
 
-app.get("/health", (_req, res) => {
-  res.json({ status: "ok" });
+app.get("/", (_req, res) => {
+  res.send("Ecom Pipeline Backend Live");
 });
+
+app.get("/health", (_req, res) => res.json({ status: "ok" }));
 
 /* -------------------------------------------------------------------------- */
 /* WebSocket Broadcast Helper                                                 */

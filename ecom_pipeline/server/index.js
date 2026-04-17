@@ -1,55 +1,75 @@
-const express             = require("express");
-const cors                = require("cors");
-const http                = require("http");
+const express = require("express");
+const cors = require("cors");
+const http = require("http");
 const { WebSocketServer } = require("ws");
+
 const { connect, getSnapshot, watchCollections } = require("./db");
-const statsRouter         = require("./routes/stats");
+const statsRouter = require("./routes/stats");
 
 const PORT = process.env.PORT || 3001;
 
-const app    = express();
+const app = express();
 const server = http.createServer(app);
 const wss = new WebSocketServer({ server });
 
-// ── Middleware ─────────────────────────────────────────────────────────────
+/* -------------------------------------------------------------------------- */
+/* Middleware                                                                 */
+/* -------------------------------------------------------------------------- */
+
 app.use(cors());
 app.use(express.json());
+
 app.use("/api", statsRouter);
 
-app.get("/health", (_req, res) => res.json({ status: "ok" }));
+app.get("/health", (_req, res) => {
+  res.json({ status: "ok" });
+});
 
-// ── WebSocket ──────────────────────────────────────────────────────────────
+/* -------------------------------------------------------------------------- */
+/* WebSocket Broadcast Helper                                                 */
+/* -------------------------------------------------------------------------- */
 
-/** Send a JSON payload to every open WS client. */
 function broadcast(payload) {
-  const msg = JSON.stringify(payload);
+  const message = JSON.stringify(payload);
+
   wss.clients.forEach((client) => {
-    if (client.readyState === 1 /* WebSocket.OPEN */) {
-      client.send(msg);
+    if (client.readyState === 1) {
+      client.send(message);
     }
   });
 }
 
-wss.on("connection", async (ws) => {
-  console.log(`[WS] Client connected — ${wss.clients.size} total`);
+/* -------------------------------------------------------------------------- */
+/* WebSocket Connections                                                      */
+/* -------------------------------------------------------------------------- */
 
-  // ── Send full snapshot immediately so the dashboard has data right away ──
+wss.on("connection", async (ws) => {
+  console.log(`[WS] Client connected - ${wss.clients.size} total`);
+
+  // Send initial snapshot
   try {
     const data = await getSnapshot();
+
     ws.send(
-      JSON.stringify({ type: "snapshot", data, timestamp: new Date().toISOString() })
+      JSON.stringify({
+        type: "snapshot",
+        data,
+        timestamp: new Date().toISOString(),
+      })
     );
   } catch (err) {
-    console.error("[WS] Snapshot error on connect:", err.message);
+    console.error("[WS] Snapshot error:", err.message);
   }
 
-  // ── Keep-alive ping / pong ────────────────────────────────────────────────
+  // Ping / Pong
   ws.on("message", (raw) => {
-    if (raw.toString() === "ping") ws.send("pong");
+    if (raw.toString() === "ping") {
+      ws.send("pong");
+    }
   });
 
   ws.on("close", () => {
-    console.log(`[WS] Client disconnected — ${wss.clients.size} remaining`);
+    console.log(`[WS] Client disconnected - ${wss.clients.size} remaining`);
   });
 
   ws.on("error", (err) => {
@@ -57,34 +77,52 @@ wss.on("connection", async (ws) => {
   });
 });
 
-// ── Bootstrap ──────────────────────────────────────────────────────────────
+/* -------------------------------------------------------------------------- */
+/* Main Bootstrap                                                             */
+/* -------------------------------------------------------------------------- */
+
 async function main() {
+  // Connect DB
   try {
     await connect();
+    console.log("[DB] Connected");
   } catch (err) {
-    console.log("DB connection skipped:", err.message);
+    console.log("[DB] Connection skipped:", err.message);
   }
-  // Watch MongoDB change streams → broadcast fresh data to all WS clients
-  try {
-  await watchCollections(async () => {
-      });
-} catch (err) {
-  console.log("Watch skipped:", err.message);
-}
-    try {
-      const data = await getSnapshot();
-      broadcast({ type: "update", data, timestamp: new Date().toISOString() });
-      console.log(`[WS] Broadcasted update to ${wss.clients.size} client(s)`);
-    } catch (err) {
-      console.error("[WS] Broadcast error:", err.message);
-    }
-  });
 
+  // Watch DB changes
+  try {
+    await watchCollections(async () => {
+      try {
+        const data = await getSnapshot();
+
+        broadcast({
+          type: "update",
+          data,
+          timestamp: new Date().toISOString(),
+        });
+
+        console.log(
+          `[WS] Broadcasted update to ${wss.clients.size} client(s)`
+        );
+      } catch (err) {
+        console.error("[WS] Broadcast error:", err.message);
+      }
+    });
+  } catch (err) {
+    console.log("[DB] Watch skipped:", err.message);
+  }
+
+  // Start Server
   server.listen(PORT, () => {
     console.log(`[Server] Running on port ${PORT}`);
-    console.log(`[WebSocket] Shared same port`);
+    console.log("[WebSocket] Running on same port");
   });
 }
+
+/* -------------------------------------------------------------------------- */
+/* Start App                                                                  */
+/* -------------------------------------------------------------------------- */
 
 main().catch((err) => {
   console.error("[Server] Fatal error:", err);

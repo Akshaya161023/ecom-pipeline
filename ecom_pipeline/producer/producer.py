@@ -36,8 +36,7 @@ def get_producer():
 def fetch_products():
     resp = requests.get(API_URL, timeout=10)
     resp.raise_for_status()
-    return resp.json()
-
+    return resp.json()["products"]
 
 def build_event(product):
     return {
@@ -51,8 +50,8 @@ def build_event(product):
         "title":        product["title"],
         "category":     product["category"],
         "price":        product["price"],
-        "rating":       product["rating"]["rate"],
-        "rating_count": product["rating"]["count"],
+        "rating":       product.get("rating", 0),
+        "rating_count": product.get("stock", 0),
         "timestamp":    datetime.utcnow().isoformat(),
     }
 

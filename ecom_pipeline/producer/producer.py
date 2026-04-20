@@ -11,7 +11,7 @@ KAFKA_BROKER   = os.environ.get("KAFKA_BROKER", "localhost:9092")
 KAFKA_USERNAME = os.environ.get("KAFKA_USERNAME", "")
 KAFKA_PASSWORD = os.environ.get("KAFKA_PASSWORD", "")
 TOPIC          = "product_events"
-API_URL        = "https://fakestoreapi.com/products"
+API_URL        = "https://dummyjson.com/products"
 
 
 def get_producer():

@@ -1,0 +1,60 @@
+# render.yaml — Render Blueprint
+# Place this file at the ROOT of your Git repository.
+# It defines all 3 services that Render will deploy automatically.
+#
+# External services required (set up BEFORE deploying):
+#   • MongoDB Atlas  → provides MONGO_URI
+#   • Upstash Kafka  → provides KAFKA_BROKER, KAFKA_USERNAME, KAFKA_PASSWORD
+
+services:
+
+  # ── 1. Web Server (Node.js + React dashboard) ──────────────────────────────
+  # Serves the REST API, WebSocket, and the built React static files.
+  # Build context is ecom_pipeline/ so the Dockerfile can reach both
+  # server/ and dashboard/ folders in a single multi-stage build.
+  - type: web
+    name: ecom-server
+    runtime: docker
+    dockerfilePath: ./ecom_pipeline/server/Dockerfile
+    dockerContext: ./ecom_pipeline
+    plan: free
+    envVars:
+      - key: MONGO_URI
+        sync: false          # You will paste this value in Render dashboard
+      - key: PORT
+        value: "3001"
+
+  # ── 2. Kafka Producer (Python background worker) ───────────────────────────
+  # Continuously fetches products from Fake Store API and sends events to Kafka.
+  - type: worker
+    name: ecom-producer
+    runtime: docker
+    dockerfilePath: ./ecom_pipeline/producer/Dockerfile
+    dockerContext: ./ecom_pipeline/producer
+    plan: free
+    envVars:
+      - key: KAFKA_BROKER
+        sync: false          # e.g. picked-wren-12345-eu1-kafka.upstash.io:9092
+      - key: KAFKA_USERNAME
+        sync: false
+      - key: KAFKA_PASSWORD
+        sync: false
+
+  # ── 3. Kafka Consumer (Python background worker) ───────────────────────────
+  # Reads events from Kafka and aggregates them into MongoDB.
+  # (Replaces the local PySpark job — same logic, no JVM overhead)
+  - type: worker
+    name: ecom-consumer
+    runtime: docker
+    dockerfilePath: ./ecom_pipeline/consumer/Dockerfile
+    dockerContext: ./ecom_pipeline/consumer
+    plan: free
+    envVars:
+      - key: KAFKA_BROKER
+        sync: false
+      - key: KAFKA_USERNAME
+        sync: false
+      - key: KAFKA_PASSWORD
+        sync: false
+      - key: MONGO_URI
+        sync: false

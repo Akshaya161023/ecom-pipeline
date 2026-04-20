@@ -1,6 +1,12 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 
-const WS_URL = "ws://localhost:8080";
+// In production the React build is served by the Node server on the same host.
+// So we derive the WS URL from window.location instead of hardcoding localhost.
+function getWsUrl() {
+  const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
+  const host  = window.location.host;           // e.g. ecom-server.onrender.com
+  return `${proto}//${host}`;
+}
 
 export default function useWebSocket() {
   const [events,     setEvents]     = useState([]);
@@ -18,6 +24,7 @@ export default function useWebSocket() {
       wsRef.current.close();
     }
 
+    const WS_URL = getWsUrl();
     const ws = new WebSocket(WS_URL);
     wsRef.current = ws;
 

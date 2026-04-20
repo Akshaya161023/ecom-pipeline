@@ -26,7 +26,7 @@ services:
 
   # ── 2. Kafka Producer (Python background worker) ───────────────────────────
   # Continuously fetches products from Fake Store API and sends events to Kafka.
-  - type: worker
+  - type: web
     name: ecom-producer
     runtime: docker
     dockerfilePath: ./ecom_pipeline/producer/Dockerfile
@@ -43,7 +43,7 @@ services:
   # ── 3. Kafka Consumer (Python background worker) ───────────────────────────
   # Reads events from Kafka and aggregates them into MongoDB.
   # (Replaces the local PySpark job — same logic, no JVM overhead)
-  - type: worker
+  - type: web
     name: ecom-consumer
     runtime: docker
     dockerfilePath: ./ecom_pipeline/consumer/Dockerfile

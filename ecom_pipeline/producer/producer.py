@@ -3,19 +3,19 @@ import time
 import random
 import os
 import requests
-from kafka import KafkaProducer
+import threading
+from confluent_kafka import Producer
 from datetime import datetime
 from http.server import HTTPServer, BaseHTTPRequestHandler
-import threading
 
-# ── Config from environment variables ────────────────────────────────────────
+# ── Config ────────────────────────────────────────────────────────────────────
 KAFKA_BROKER   = os.environ.get("KAFKA_BROKER", "localhost:9092")
 KAFKA_USERNAME = os.environ.get("KAFKA_USERNAME", "")
 KAFKA_PASSWORD = os.environ.get("KAFKA_PASSWORD", "")
 TOPIC          = "product_events"
 API_URL        = "https://dummyjson.com/products?limit=100"
 
-# ── Health check server (required by Render web services) ────────────────────
+# ── Health check server ───────────────────────────────────────────────────────
 class HealthHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
@@ -28,24 +28,21 @@ def start_health_server():
     server = HTTPServer(("0.0.0.0", 8081), HealthHandler)
     server.serve_forever()
 
-# ── Kafka Producer setup ──────────────────────────────────────────────────────
+# ── Kafka Producer ────────────────────────────────────────────────────────────
 def get_producer():
-    kwargs = dict(
-        bootstrap_servers=KAFKA_BROKER,
-        value_serializer=lambda v: json.dumps(v).encode("utf-8"),
-        retries=5,
-        retry_backoff_ms=1000,
-        request_timeout_ms=30000,
-        max_block_ms=30000,
-    )
+    conf = {
+        "bootstrap.servers": KAFKA_BROKER,
+        "socket.timeout.ms": 60000,
+        "message.timeout.ms": 60000,
+    }
     if KAFKA_USERNAME and KAFKA_PASSWORD:
-        kwargs.update(
-            security_protocol="SASL_SSL",
-            sasl_mechanism="SCRAM-SHA-256",
-            sasl_plain_username=KAFKA_USERNAME,
-            sasl_plain_password=KAFKA_PASSWORD,
-        )
-    return KafkaProducer(**kwargs)
+        conf.update({
+            "security.protocol": "SASL_SSL",
+            "sasl.mechanism": "SCRAM-SHA-256",
+            "sasl.username": KAFKA_USERNAME,
+            "sasl.password": KAFKA_PASSWORD,
+        })
+    return Producer(conf)
 
 # ── Fetch Products ────────────────────────────────────────────────────────────
 def fetch_products():
@@ -73,26 +70,27 @@ def build_event(product):
 
 # ── Main ──────────────────────────────────────────────────────────────────────
 def main():
-    # Start health server in background thread
     threading.Thread(target=start_health_server, daemon=True).start()
     print("[Producer] Health server started on port 8081")
 
-    # Fetch products once
     print("[Producer] Fetching products...")
     products = fetch_products()
     print(f"[Producer] Loaded {len(products)} products.")
 
     while True:
         try:
-            print(f"[Producer] Connecting to Kafka broker: {KAFKA_BROKER}")
+            print(f"[Producer] Connecting to Kafka: {KAFKA_BROKER}")
             producer = get_producer()
-            print(f"[Producer] Connected! Streaming to topic '{TOPIC}'...\n")
+            print(f"[Producer] Connected! Streaming to '{TOPIC}'...")
 
             while True:
                 product = random.choice(products)
                 event   = build_event(product)
-                producer.send(TOPIC, value=event)
-                producer.flush()
+                producer.produce(
+                    TOPIC,
+                    value=json.dumps(event).encode("utf-8")
+                )
+                producer.poll(0)
                 print(
                     f"[{event['timestamp']}] {event['event_type']:8s} | "
                     f"User {event['user_id']} | "

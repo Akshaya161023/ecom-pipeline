@@ -98,5 +98,5 @@ MIT License — feel free to use and modify!
 ## 📸 Screenshot
 
 ![Dashboard](dashboard.png)
-![Analytics](Real-Time%20E-Commerce%20Analytics.png)
+![Analytics](analytics.png)
 

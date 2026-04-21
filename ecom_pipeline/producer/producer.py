@@ -1,28 +1,42 @@
 import json
 import time
-import random
 import os
-import requests
-from kafka import KafkaProducer
+import pymongo
+import threading
+from kafka import KafkaConsumer
 from datetime import datetime
+from http.server import HTTPServer, BaseHTTPRequestHandler
 
 # ── Config from environment variables ────────────────────────────────────────
 KAFKA_BROKER   = os.environ.get("KAFKA_BROKER", "localhost:9092")
 KAFKA_USERNAME = os.environ.get("KAFKA_USERNAME", "")
 KAFKA_PASSWORD = os.environ.get("KAFKA_PASSWORD", "")
+MONGO_URI      = os.environ.get("MONGO_URI", "mongodb://localhost:27017")
 TOPIC          = "product_events"
-API_URL        = "https://dummyjson.com/products"
+GROUP_ID       = "ecom-consumer-group"
 
+# ── Health check server (required by Render web services) ────────────────────
+class HealthHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"OK")
+    def log_message(self, *args):
+        pass
 
-def get_producer():
-    """Build a KafkaProducer. Supports plain (local) and SASL_SSL (Upstash)."""
+def start_health_server():
+    server = HTTPServer(("0.0.0.0", 8080), HealthHandler)
+    server.serve_forever()
+
+# ── Kafka Consumer setup ──────────────────────────────────────────────────────
+def get_consumer():
     kwargs = dict(
         bootstrap_servers=KAFKA_BROKER,
-        value_serializer=lambda v: json.dumps(v).encode("utf-8"),
-        retries=5,
-        retry_backoff_ms=1000,
+        group_id=GROUP_ID,
+        auto_offset_reset="earliest",
+        value_deserializer=lambda v: json.loads(v.decode("utf-8")),
+        consumer_timeout_ms=60000,
     )
-    # If credentials are present, use SASL_SSL (required by Upstash Kafka)
     if KAFKA_USERNAME and KAFKA_PASSWORD:
         kwargs.update(
             security_protocol="SASL_SSL",
@@ -30,51 +44,43 @@ def get_producer():
             sasl_plain_username=KAFKA_USERNAME,
             sasl_plain_password=KAFKA_PASSWORD,
         )
-    return KafkaProducer(**kwargs)
+    return KafkaConsumer(TOPIC, **kwargs)
 
-
-def fetch_products():
-    resp = requests.get(API_URL, timeout=10)
-    resp.raise_for_status()
-    return resp.json()["products"]
-
-def build_event(product):
-    return {
-        "event_id":     random.randint(10000, 99999),
-        "event_type":   random.choices(
-                            ["view", "click", "purchase"],
-                            weights=[6, 3, 1]
-                        )[0],
-        "user_id":      f"U{random.randint(1, 50):03d}",
-        "product_id":   product["id"],
-        "title":        product["title"],
-        "category":     product["category"],
-        "price":        product["price"],
-        "rating":       product.get("rating", 0),
-        "rating_count": product.get("stock", 0),
-        "timestamp":    datetime.utcnow().isoformat(),
-    }
-
-
+# ── Main ──────────────────────────────────────────────────────────────────────
 def main():
-    print("Connecting to Kafka broker at", KAFKA_BROKER, "...")
-    producer = get_producer()
+    # Start health server in background thread
+    threading.Thread(target=start_health_server, daemon=True).start()
+    print("[Consumer] Health server started on port 8080")
 
-    print("Fetching products from Fake Store API...")
-    products = fetch_products()
-    print(f"Loaded {len(products)} products. Streaming to Kafka topic '{TOPIC}'...\n")
+    # Connect to MongoDB
+    print("[Consumer] Connecting to MongoDB...")
+    mongo_client = pymongo.MongoClient(MONGO_URI)
+    db = mongo_client["ecom_pipeline"]
+    collection = db["events"]
+    print("[Consumer] MongoDB connected.")
 
+    # Connect to Kafka
     while True:
-        product = random.choice(products)
-        event   = build_event(product)
-        producer.send(TOPIC, value=event)
-        print(
-            f"[{event['timestamp']}] {event['event_type']:8s} | "
-            f"User {event['user_id']} | {event['category']:25s} | "
-            f"${event['price']:.2f}"
-        )
-        time.sleep(1)
+        try:
+            print(f"[Consumer] Connecting to Kafka broker: {KAFKA_BROKER}")
+            consumer = get_consumer()
+            print(f"[Consumer] Subscribed to topic '{TOPIC}'. Waiting for events...")
 
+            for message in consumer:
+                event = message.value
+                event["consumed_at"] = datetime.utcnow().isoformat()
+                collection.insert_one(event)
+                print(
+                    f"[Consumer] Saved → {event.get('event_type','?'):8s} | "
+                    f"User {event.get('user_id','?')} | "
+                    f"{event.get('category','?'):25s} | "
+                    f"${event.get('price', 0):.2f}"
+                )
+
+        except Exception as e:
+            print(f"[Consumer] Error: {e}")
+            print("[Consumer] Retrying in 10 seconds...")
+            time.sleep(10)
 
 if __name__ == "__main__":
     main()

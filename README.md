@@ -99,5 +99,5 @@ MIT License — feel free to use and modify!
 
 ![Dashboard](dashboard.png)
 
-![Analytics](analytics.png)
+
 

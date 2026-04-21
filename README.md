@@ -95,4 +95,7 @@ docker-compose up --build
 ## 📄 License
 
 MIT License — feel free to use and modify!
+## 📸 Screenshot
+
+![Dashboard](dashboard.png)
 

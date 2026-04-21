@@ -1,16 +1,11 @@
-"""
-Lightweight Kafka → MongoDB consumer.
-Replaces the PySpark streaming job for cloud deployment.
-"""
 import json
 import os
 import time
 import threading
 import pymongo
-from kafka import KafkaConsumer
+from confluent_kafka import Consumer, KafkaError
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
-# ── Config from environment variables ────────────────────────────────────────
 KAFKA_BROKER   = os.environ.get("KAFKA_BROKER", "localhost:9092")
 KAFKA_USERNAME = os.environ.get("KAFKA_USERNAME", "")
 KAFKA_PASSWORD = os.environ.get("KAFKA_PASSWORD", "")
@@ -18,7 +13,6 @@ MONGO_URI      = os.environ.get("MONGO_URI", "mongodb://localhost:27017")
 TOPIC          = "product_events"
 DB_NAME        = "ecom_pipeline"
 
-# ── Health check server (required by Render) ─────────────────────────────────
 class HealthHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
@@ -31,26 +25,24 @@ def start_health_server():
     server = HTTPServer(("0.0.0.0", 8080), HealthHandler)
     server.serve_forever()
 
-# ── Kafka Consumer setup ──────────────────────────────────────────────────────
 def get_consumer():
-    kwargs = dict(
-        bootstrap_servers=KAFKA_BROKER,
-        group_id="ecom-consumer-group",
-        auto_offset_reset="latest",
-        enable_auto_commit=True,
-        value_deserializer=lambda m: json.loads(m.decode("utf-8")),
-        consumer_timeout_ms=60000,
-    )
+    conf = {
+        "bootstrap.servers": KAFKA_BROKER,
+        "group.id": "ecom-consumer-group",
+        "auto.offset.reset": "latest",
+        "enable.auto.commit": True,
+    }
     if KAFKA_USERNAME and KAFKA_PASSWORD:
-        kwargs.update(
-            security_protocol="SASL_SSL",
-            sasl_mechanism="SCRAM-SHA-256",
-            sasl_plain_username=KAFKA_USERNAME,
-            sasl_plain_password=KAFKA_PASSWORD,
-        )
-    return KafkaConsumer(TOPIC, **kwargs)
+        conf.update({
+            "security.protocol": "SASL_SSL",
+            "sasl.mechanism": "SCRAM-SHA-256",
+            "sasl.username": KAFKA_USERNAME,
+            "sasl.password": KAFKA_PASSWORD,
+        })
+    c = Consumer(conf)
+    c.subscribe([TOPIC])
+    return c
 
-# ── Process Event ─────────────────────────────────────────────────────────────
 def process_event(db, event):
     # 1. Raw events (keep last 500)
     db["raw_events"].insert_one({k: v for k, v in event.items() if k != "_id"})
@@ -86,27 +78,31 @@ def process_event(db, event):
         upsert=True,
     )
 
-# ── Main ──────────────────────────────────────────────────────────────────────
 def main():
-    # Start health server FIRST
     threading.Thread(target=start_health_server, daemon=True).start()
     print("[Consumer] Health server started on port 8080")
 
-    # Connect to MongoDB
     print("[Consumer] Connecting to MongoDB...")
     mongo_client = pymongo.MongoClient(MONGO_URI)
     db = mongo_client[DB_NAME]
     print("[Consumer] MongoDB connected.")
 
-    # Connect to Kafka with retry
     while True:
         try:
             print("[Consumer] Connecting to Kafka broker:", KAFKA_BROKER)
             consumer = get_consumer()
-            print(f"[Consumer] Subscribed to topic '{TOPIC}'. Waiting for events...")
+            print(f"[Consumer] Subscribed to '{TOPIC}'. Waiting for events...")
 
-            for message in consumer:
-                event = message.value
+            while True:
+                msg = consumer.poll(timeout=1.0)
+                if msg is None:
+                    continue
+                if msg.error():
+                    if msg.error().code() == KafkaError._PARTITION_EOF:
+                        continue
+                    raise Exception(msg.error())
+
+                event = json.loads(msg.value().decode("utf-8"))
                 try:
                     process_event(db, event)
                     print(
@@ -116,7 +112,7 @@ def main():
                         f"${float(event.get('price', 0)):.2f}"
                     )
                 except Exception as exc:
-                    print(f"[Consumer] Error processing event: {exc}")
+                    print(f"[Consumer] Error processing: {exc}")
 
         except Exception as e:
             print(f"[Consumer] Kafka error: {e}")
